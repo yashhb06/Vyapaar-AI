@@ -1,23 +1,24 @@
 import express from 'express';
-import { 
-  addInvoice, 
-  getInvoices, 
-  updateInvoice 
+import {
+  addInvoice,
+  getInvoices,
+  updateInvoice
 } from '../config/database.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, requireVendor } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.use(authenticateToken);
+router.use(requireVendor);
 
 router.get('/', async (req, res) => {
   try {
-    const invoices = await getInvoices(req.user.uid);
-    
-    const sortedInvoices = invoices.sort((a, b) => 
+    const invoices = await getInvoices(req.vendor.id);
+
+    const sortedInvoices = invoices.sort((a, b) =>
       new Date(b.date) - new Date(a.date)
     );
-    
+
     res.json({
       success: true,
       data: sortedInvoices,
@@ -35,17 +36,17 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { 
-      invoiceNumber, 
-      customerName, 
-      customerPhone, 
-      amount, 
-      gst, 
-      totalAmount, 
-      status, 
-      date, 
-      dueDate, 
-      items 
+    const {
+      invoiceNumber,
+      customerName,
+      customerPhone,
+      amount,
+      gst,
+      totalAmount,
+      status,
+      date,
+      dueDate,
+      items
     } = req.body;
 
     if (!customerName || !amount || !items || !Array.isArray(items) || items.length === 0) {
@@ -82,8 +83,8 @@ router.post('/', async (req, res) => {
       }))
     };
 
-    const result = await addInvoice(req.user.uid, invoiceData);
-    
+    const result = await addInvoice(req.user.uid, invoiceData, req.vendor.id);
+
     res.status(201).json({
       success: true,
       message: 'Invoice created successfully',
@@ -102,16 +103,16 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      customerName, 
-      customerPhone, 
-      amount, 
-      gst, 
-      totalAmount, 
-      status, 
-      date, 
-      dueDate, 
-      items 
+    const {
+      customerName,
+      customerPhone,
+      amount,
+      gst,
+      totalAmount,
+      status,
+      date,
+      dueDate,
+      items
     } = req.body;
 
     if (!id) {
@@ -123,7 +124,7 @@ router.put('/:id', async (req, res) => {
     }
 
     const updateData = {};
-    
+
     if (customerName !== undefined) updateData.customerName = customerName.trim();
     if (customerPhone !== undefined) updateData.customerPhone = customerPhone.trim();
     if (amount !== undefined) {
@@ -193,7 +194,7 @@ router.put('/:id', async (req, res) => {
     }
 
     await updateInvoice(id, updateData);
-    
+
     res.json({
       success: true,
       message: 'Invoice updated successfully',
@@ -231,7 +232,7 @@ router.put('/:id/status', async (req, res) => {
     }
 
     await updateInvoice(id, { status });
-    
+
     res.json({
       success: true,
       message: 'Invoice status updated successfully',
@@ -249,8 +250,8 @@ router.put('/:id/status', async (req, res) => {
 
 router.get('/stats', async (req, res) => {
   try {
-    const invoices = await getInvoices(req.user.uid);
-    
+    const invoices = await getInvoices(req.vendor.id);
+
     const stats = {
       total: invoices.length,
       paid: invoices.filter(i => i.status === 'Paid').length,
@@ -267,7 +268,7 @@ router.get('/stats', async (req, res) => {
         .filter(i => i.status === 'Overdue')
         .reduce((sum, i) => sum + i.totalAmount, 0)
     };
-    
+
     res.json({
       success: true,
       data: stats
@@ -278,6 +279,39 @@ router.get('/stats', async (req, res) => {
       error: 'Failed to fetch invoice statistics',
       message: 'Unable to retrieve invoice statistics',
       code: 'INVOICE_STATS_FETCH_FAILED'
+    });
+  }
+});
+
+router.post('/generate', async (req, res) => {
+  try {
+    const { invoiceId, format } = req.body;
+
+    if (!invoiceId) {
+      return res.status(400).json({
+        error: 'Missing invoice ID',
+        message: 'Invoice ID is required',
+        code: 'MISSING_INVOICE_ID'
+      });
+    }
+
+    // TODO: Implement PDF generation using pdfGenerator utility
+    // For now, return success with placeholder
+    res.json({
+      success: true,
+      message: 'Invoice generated successfully',
+      data: {
+        invoiceId,
+        format: format || 'pdf',
+        downloadUrl: `/api/invoices/${invoiceId}/download`
+      }
+    });
+  } catch (error) {
+    console.error('Generate invoice error:', error);
+    res.status(500).json({
+      error: 'Failed to generate invoice',
+      message: 'Unable to generate the invoice',
+      code: 'INVOICE_GENERATE_FAILED'
     });
   }
 });

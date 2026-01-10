@@ -1,20 +1,21 @@
 import express from 'express';
-import { 
-  addInventoryItem, 
-  getInventoryItems, 
-  updateInventoryItem, 
-  deleteInventoryItem 
+import {
+  addInventoryItem,
+  getInventoryItems,
+  updateInventoryItem,
+  deleteInventoryItem
 } from '../config/database.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, requireVendor } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.use(authenticateToken);
+router.use(requireVendor);
 
 router.get('/', async (req, res) => {
   try {
-    const items = await getInventoryItems(req.user.uid);
-    
+    const items = await getInventoryItems(req.vendor.id);
+
     res.json({
       success: true,
       data: items,
@@ -58,8 +59,8 @@ router.post('/', async (req, res) => {
       threshold: parseInt(threshold) || 10
     };
 
-    const result = await addInventoryItem(req.user.uid, itemData);
-    
+    const result = await addInventoryItem(req.user.uid, itemData, req.vendor.id);
+
     res.status(201).json({
       success: true,
       message: 'Inventory item added successfully',
@@ -89,7 +90,7 @@ router.put('/:id', async (req, res) => {
     }
 
     const updateData = {};
-    
+
     if (name !== undefined) updateData.name = name.trim();
     if (price !== undefined) {
       if (price < 0) {
@@ -132,7 +133,7 @@ router.put('/:id', async (req, res) => {
     }
 
     await updateInventoryItem(id, updateData);
-    
+
     res.json({
       success: true,
       message: 'Inventory item updated successfully',
@@ -161,7 +162,7 @@ router.delete('/:id', async (req, res) => {
     }
 
     await deleteInventoryItem(id);
-    
+
     res.json({
       success: true,
       message: 'Inventory item deleted successfully',
@@ -179,9 +180,9 @@ router.delete('/:id', async (req, res) => {
 
 router.get('/low-stock', async (req, res) => {
   try {
-    const items = await getInventoryItems(req.user.uid);
+    const items = await getInventoryItems(req.vendor.id);
     const lowStockItems = items.filter(item => item.quantity <= item.threshold);
-    
+
     res.json({
       success: true,
       data: lowStockItems,

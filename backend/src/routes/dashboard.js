@@ -1,21 +1,24 @@
 import express from 'express';
-import { 
-  getInventoryItems, 
-  getPaymentReminders, 
-  getInvoices 
+import {
+  getInventoryItems,
+  getPaymentReminders,
+  getInvoices,
+  getSales
 } from '../config/database.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, requireVendor } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.use(authenticateToken);
+router.use(requireVendor);
 
 router.get('/stats', async (req, res) => {
   try {
-    const [inventoryItems, paymentReminders, invoices] = await Promise.all([
-      getInventoryItems(req.user.uid),
-      getPaymentReminders(req.user.uid),
-      getInvoices(req.user.uid)
+    const [inventoryItems, paymentReminders, invoices, sales] = await Promise.all([
+      getInventoryItems(req.vendor.id),
+      getPaymentReminders(req.vendor.id),
+      getInvoices(req.vendor.id),
+      getSales(req.vendor.id) // ADD SALES DATA
     ]);
 
     const today = new Date();
@@ -23,44 +26,40 @@ router.get('/stats', async (req, res) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    const todayInvoices = invoices.filter(invoice => {
-      const invoiceDate = new Date(invoice.date);
-      invoiceDate.setHours(0, 0, 0, 0);
-      return invoiceDate.getTime() === today.getTime();
+    // Filter today's sales using saleDate field
+    const todaySales = sales.filter(sale => {
+      const saleDate = sale.saleDate?.toDate ? sale.saleDate.toDate() : new Date(sale.saleDate);
+      saleDate.setHours(0, 0, 0, 0);
+      return saleDate.getTime() === today.getTime();
     });
 
-    const thisWeekInvoices = invoices.filter(invoice => {
-      const invoiceDate = new Date(invoice.date);
-      const weekAgo = new Date(today);
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      return invoiceDate >= weekAgo;
+    // Filter this week's sales
+    const weekAgo = new Date(today);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const thisWeekSales = sales.filter(sale => {
+      const saleDate = sale.saleDate?.toDate ? sale.saleDate.toDate() : new Date(sale.saleDate);
+      return saleDate >= weekAgo;
     });
 
     const lowStockItems = inventoryItems.filter(item => item.quantity <= item.threshold);
-    
-    const pendingPayments = paymentReminders.filter(reminder => 
+
+    const pendingPayments = paymentReminders.filter(reminder =>
       reminder.status === 'pending' || reminder.status === 'overdue'
     );
 
-    const todaySales = todayInvoices
-      .filter(invoice => invoice.status === 'Paid')
-      .reduce((sum, invoice) => sum + invoice.totalAmount, 0);
-
-    const thisWeekSales = thisWeekInvoices
-      .filter(invoice => invoice.status === 'Paid')
-      .reduce((sum, invoice) => sum + invoice.totalAmount, 0);
-
+    const todaySalesValue = todaySales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0);
+    const thisWeekSalesValue = thisWeekSales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0);
     const pendingPaymentsAmount = pendingPayments.reduce((sum, reminder) => sum + reminder.amount, 0);
 
     const stats = {
       todaySales: {
-        value: todaySales,
-        transactions: todayInvoices.filter(i => i.status === 'Paid').length,
+        value: todaySalesValue,
+        transactions: todaySales.length,
         change: '+12%'
       },
       thisWeekSales: {
-        value: thisWeekSales,
-        transactions: thisWeekInvoices.filter(i => i.status === 'Paid').length,
+        value: thisWeekSalesValue,
+        transactions: thisWeekSales.length,
         change: '+8%'
       },
       pendingPayments: {
@@ -81,10 +80,10 @@ router.get('/stats', async (req, res) => {
         value: inventoryItems.reduce((sum, item) => sum + (item.price * item.quantity), 0)
       },
       recentActivity: [
-        ...todayInvoices.slice(0, 3).map(invoice => ({
+        ...todaySales.slice(0, 3).map(sale => ({
           type: 'sale',
-          customer: invoice.customerName,
-          amount: `₹${invoice.totalAmount.toLocaleString()}`,
+          customer: sale.customerName,
+          amount: `₹${(sale.totalAmount || 0).toLocaleString()}`,
           time: 'Today'
         })),
         ...paymentReminders.slice(0, 2).map(reminder => ({
@@ -113,9 +112,9 @@ router.get('/stats', async (req, res) => {
 router.get('/insights', async (req, res) => {
   try {
     const [inventoryItems, paymentReminders, invoices] = await Promise.all([
-      getInventoryItems(req.user.uid),
-      getPaymentReminders(req.user.uid),
-      getInvoices(req.user.uid)
+      getInventoryItems(req.vendor.id),
+      getPaymentReminders(req.vendor.id),
+      getInvoices(req.vendor.id)
     ]);
 
     const insights = [];

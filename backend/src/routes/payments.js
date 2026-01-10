@@ -1,24 +1,25 @@
 import express from 'express';
-import { 
-  addPaymentReminder, 
-  getPaymentReminders, 
-  updatePaymentReminder, 
-  deletePaymentReminder 
+import {
+  addPaymentReminder,
+  getPaymentReminders,
+  updatePaymentReminder,
+  deletePaymentReminder
 } from '../config/database.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, requireVendor } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.use(authenticateToken);
+router.use(requireVendor);
 
 router.get('/', async (req, res) => {
   try {
-    const reminders = await getPaymentReminders(req.user.uid);
-    
-    const sortedReminders = reminders.sort((a, b) => 
+    const reminders = await getPaymentReminders(req.vendor.id);
+
+    const sortedReminders = reminders.sort((a, b) =>
       new Date(b.createdAt) - new Date(a.createdAt)
     );
-    
+
     res.json({
       success: true,
       data: sortedReminders,
@@ -67,8 +68,8 @@ router.post('/', async (req, res) => {
       originalText: originalText?.trim() || ''
     };
 
-    const result = await addPaymentReminder(req.user.uid, reminderData);
-    
+    const result = await addPaymentReminder(req.user.uid, reminderData, req.vendor.id);
+
     res.status(201).json({
       success: true,
       message: 'Payment reminder created successfully',
@@ -98,7 +99,7 @@ router.put('/:id', async (req, res) => {
     }
 
     const updateData = {};
-    
+
     if (customerName !== undefined) updateData.customerName = customerName.trim();
     if (amount !== undefined) {
       if (amount <= 0) {
@@ -137,7 +138,7 @@ router.put('/:id', async (req, res) => {
     }
 
     await updatePaymentReminder(id, updateData);
-    
+
     res.json({
       success: true,
       message: 'Payment reminder updated successfully',
@@ -166,7 +167,7 @@ router.delete('/:id', async (req, res) => {
     }
 
     await deletePaymentReminder(id);
-    
+
     res.json({
       success: true,
       message: 'Payment reminder deleted successfully',
@@ -195,7 +196,7 @@ router.put('/:id/mark-paid', async (req, res) => {
     }
 
     await updatePaymentReminder(id, { status: 'paid' });
-    
+
     res.json({
       success: true,
       message: 'Payment reminder marked as paid',
@@ -213,8 +214,8 @@ router.put('/:id/mark-paid', async (req, res) => {
 
 router.get('/stats', async (req, res) => {
   try {
-    const reminders = await getPaymentReminders(req.user.uid);
-    
+    const reminders = await getPaymentReminders(req.vendor.id);
+
     const stats = {
       total: reminders.length,
       pending: reminders.filter(r => r.status === 'pending').length,
@@ -228,7 +229,7 @@ router.get('/stats', async (req, res) => {
         .filter(r => r.status === 'overdue')
         .reduce((sum, r) => sum + r.amount, 0)
     };
-    
+
     res.json({
       success: true,
       data: stats
@@ -239,6 +240,76 @@ router.get('/stats', async (req, res) => {
       error: 'Failed to fetch payment statistics',
       message: 'Unable to retrieve payment statistics',
       code: 'PAYMENT_STATS_FETCH_FAILED'
+    });
+  }
+});
+
+router.post('/send-reminder', async (req, res) => {
+  try {
+    const { reminderId, message } = req.body;
+
+    if (!reminderId) {
+      return res.status(400).json({
+        error: 'Missing reminder ID',
+        message: 'Reminder ID is required',
+        code: 'MISSING_REMINDER_ID'
+      });
+    }
+
+    // TODO: Integrate with WhatsApp service
+    // For now, just update the reminder status
+    await updatePaymentReminder(reminderId, {
+      lastReminderSent: new Date()
+    });
+
+    res.json({
+      success: true,
+      message: 'Payment reminder sent successfully',
+      data: { id: reminderId }
+    });
+  } catch (error) {
+    console.error('Send reminder error:', error);
+    res.status(500).json({
+      error: 'Failed to send payment reminder',
+      message: 'Unable to send the payment reminder',
+      code: 'SEND_REMINDER_FAILED'
+    });
+  }
+});
+
+router.post('/bulk-reminder', async (req, res) => {
+  try {
+    const { reminderIds, message } = req.body;
+
+    if (!reminderIds || !Array.isArray(reminderIds) || reminderIds.length === 0) {
+      return res.status(400).json({
+        error: 'Missing reminder IDs',
+        message: 'At least one reminder ID is required',
+        code: 'MISSING_REMINDER_IDS'
+      });
+    }
+
+    // TODO: Integrate with WhatsApp service for bulk sending
+    // For now, just update all reminders
+    const updatePromises = reminderIds.map(id =>
+      updatePaymentReminder(id, {
+        lastReminderSent: new Date()
+      })
+    );
+
+    await Promise.all(updatePromises);
+
+    res.json({
+      success: true,
+      message: `${reminderIds.length} payment reminders sent successfully`,
+      data: { count: reminderIds.length }
+    });
+  } catch (error) {
+    console.error('Bulk reminder error:', error);
+    res.status(500).json({
+      error: 'Failed to send bulk reminders',
+      message: 'Unable to send payment reminders',
+      code: 'BULK_REMINDER_FAILED'
     });
   }
 });

@@ -3,11 +3,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { 
-  MessageCircle, 
-  Phone, 
-  Edit3, 
-  Trash2, 
+import {
+  MessageCircle,
+  Phone,
+  Edit3,
+  Trash2,
   CheckCircle,
   Clock,
   AlertTriangle,
@@ -28,7 +28,7 @@ interface ReminderData {
 
 interface ReminderCardProps {
   reminder: ReminderData;
-  onEdit?: (id: string) => void;
+  onEdit?: (reminder: ReminderData) => void;
   onDelete?: (id: string) => void;
   onMarkPaid?: (id: string) => void;
 }
@@ -58,19 +58,36 @@ export function ReminderCard({ reminder, onEdit, onDelete, onMarkPaid }: Reminde
   const handleSendWhatsApp = async () => {
     setIsSending(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
+      const { whatsappAPI } = await import('@/lib/api');
+
+      // Extract amount as number
+      const amount = typeof reminder.amount === 'number'
+        ? reminder.amount
+        : parseFloat(reminder.amount.toString().replace(/[₹,]/g, ''));
+
+      // Format due date
+      const dueDate = typeof reminder.dueDate === 'object' && reminder.dueDate?._seconds
+        ? new Date(reminder.dueDate._seconds * 1000).toISOString()
+        : reminder.dueDate;
+
+      await whatsappAPI.sendPaymentReminder(
+        reminder.id,
+        reminder.phone,
+        reminder.customerName,
+        amount,
+        dueDate
+      );
+
       toast({
-        title: "WhatsApp Reminder Sent",
+        title: "✅ WhatsApp Reminder Sent",
         description: `Payment reminder sent to ${reminder.customerName}`,
       });
-      
-      // Here you would update the reminder status to 'sent'
-    } catch (error) {
+
+    } catch (error: any) {
+      console.error('WhatsApp send error:', error);
       toast({
         title: "Failed to Send",
-        description: "Could not send WhatsApp reminder. Please try again.",
+        description: error.response?.data?.message || "Could not send WhatsApp reminder. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -82,7 +99,7 @@ export function ReminderCard({ reminder, onEdit, onDelete, onMarkPaid }: Reminde
     setIsSending(true);
     try {
       await new Promise(resolve => setTimeout(resolve, 1000));
-      
+
       toast({
         title: "SMS Reminder Sent",
         description: `Payment reminder sent to ${reminder.customerName}`,
@@ -99,10 +116,9 @@ export function ReminderCard({ reminder, onEdit, onDelete, onMarkPaid }: Reminde
   };
 
   return (
-    <Card className={`transition-all duration-300 hover:shadow-md ${
-      reminder.status === 'overdue' ? 'border-destructive/50' : 
+    <Card className={`transition-all duration-300 hover:shadow-md ${reminder.status === 'overdue' ? 'border-destructive/50' :
       reminder.status === 'paid' ? 'border-success/50' : ''
-    }`}>
+      }`}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -122,16 +138,22 @@ export function ReminderCard({ reminder, onEdit, onDelete, onMarkPaid }: Reminde
           </Badge>
         </div>
       </CardHeader>
-      
+
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div>
             <p className="text-sm text-muted-foreground">Amount Due</p>
-            <p className="text-xl font-bold text-primary">{reminder.amount}</p>
+            <p className="text-xl font-bold text-primary">
+              {typeof reminder.amount === 'number' ? `₹${reminder.amount.toLocaleString()}` : reminder.amount}
+            </p>
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Due Date</p>
-            <p className="font-semibold">{reminder.dueDate}</p>
+            <p className="font-semibold">
+              {reminder.dueDate && typeof reminder.dueDate === 'object' && (reminder.dueDate as any)._seconds
+                ? new Date((reminder.dueDate as any)._seconds * 1000).toLocaleDateString()
+                : reminder.dueDate || 'Not set'}
+            </p>
           </div>
         </div>
 
@@ -145,9 +167,9 @@ export function ReminderCard({ reminder, onEdit, onDelete, onMarkPaid }: Reminde
         <div className="flex gap-2 pt-2">
           {reminder.status !== 'paid' && (
             <>
-              <Button 
-                variant="gradient" 
-                size="sm" 
+              <Button
+                variant="gradient"
+                size="sm"
                 onClick={handleSendWhatsApp}
                 disabled={isSending}
                 className="flex-1 gap-2"
@@ -155,10 +177,10 @@ export function ReminderCard({ reminder, onEdit, onDelete, onMarkPaid }: Reminde
                 <MessageCircle className="w-4 h-4" />
                 {isSending ? "Sending..." : "WhatsApp"}
               </Button>
-              
-              <Button 
-                variant="outline" 
-                size="sm" 
+
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={handleSendSMS}
                 disabled={isSending}
                 className="flex-1 gap-2"
@@ -168,11 +190,11 @@ export function ReminderCard({ reminder, onEdit, onDelete, onMarkPaid }: Reminde
               </Button>
             </>
           )}
-          
+
           {reminder.status !== 'paid' && (
-            <Button 
-              variant="success" 
-              size="sm" 
+            <Button
+              variant="success"
+              size="sm"
               onClick={() => onMarkPaid?.(reminder.id)}
               className="gap-2"
             >
@@ -183,19 +205,19 @@ export function ReminderCard({ reminder, onEdit, onDelete, onMarkPaid }: Reminde
         </div>
 
         <div className="flex gap-2">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={() => onEdit?.(reminder.id)}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onEdit?.(reminder)}
             className="gap-2"
           >
             <Edit3 className="w-3 h-3" />
             Edit
           </Button>
-          
-          <Button 
-            variant="ghost" 
-            size="sm" 
+
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => onDelete?.(reminder.id)}
             className="gap-2 text-destructive hover:text-destructive"
           >

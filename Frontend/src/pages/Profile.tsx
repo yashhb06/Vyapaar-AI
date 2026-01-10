@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,13 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
-import { 
-  User, 
-  Store, 
-  Phone, 
-  Mail, 
-  MapPin, 
-  FileText, 
+import {
+  User,
+  Store,
+  Phone,
+  Mail,
+  MapPin,
+  FileText,
   Shield,
   Edit3,
   Camera,
@@ -21,27 +21,88 @@ import {
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { vendorAPI } from "@/lib/api";
 
 const Profile = () => {
   const { toast } = useToast();
+  const { vendor: contextVendor } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [profileData, setProfileData] = useState({
-    name: "राजेश कुमार",
-    shopName: "कुमार किराना स्टोर",
-    phone: "+91 98765 43210",
-    email: "rajesh.kumar@vyapaar.com",
-    gstin: "27AABCU9603R1ZV",
-    address: "मुख्य बाजार, नई दिल्ली - 110001",
-    businessType: "Grocery Store",
-    yearEstablished: "2015"
+    name: "",
+    shopName: "",
+    phone: "",
+    email: "",
+    gstin: "",
+    address: "",
+    businessType: "",
+    yearEstablished: ""
   });
 
-  const handleSave = () => {
-    setIsEditing(false);
-    toast({
-      title: "Profile Updated",
-      description: "Your profile has been saved successfully.",
-    });
+  // Fetch vendor profile on mount
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        setIsLoading(true);
+        const response = await vendorAPI.getProfile();
+        const vendor = response.data.data;
+        setProfileData({
+          name: vendor.ownerName || "",
+          shopName: vendor.shopName || "",
+          phone: vendor.phoneNumber || "",
+          email: vendor.email || "",
+          gstin: vendor.gstNumber || "",
+          address: vendor.address || "",
+          businessType: vendor.businessType || "Retail",
+          yearEstablished: vendor.createdAt ? new Date(vendor.createdAt._seconds * 1000).getFullYear().toString() : "2024"
+        });
+      } catch (error) {
+        console.error("Failed to fetch profile:", error);
+        // Use context vendor as fallback
+        if (contextVendor) {
+          setProfileData({
+            name: contextVendor.ownerName || "",
+            shopName: contextVendor.shopName || "",
+            phone: contextVendor.phoneNumber || "",
+            email: contextVendor.email || "",
+            gstin: contextVendor.gstNumber || "",
+            address: contextVendor.address || "",
+            businessType: contextVendor.businessType || "Retail",
+            yearEstablished: "2024"
+          });
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchProfile();
+  }, [contextVendor]);
+
+  const handleSave = async () => {
+    try {
+      await vendorAPI.updateProfile({
+        ownerName: profileData.name,
+        shopName: profileData.shopName,
+        phoneNumber: profileData.phone,
+        email: profileData.email,
+        gstNumber: profileData.gstin,
+        address: profileData.address,
+        businessType: profileData.businessType
+      });
+      setIsEditing(false);
+      toast({
+        title: "Profile Updated",
+        description: "Your profile has been saved successfully.",
+      });
+    } catch (error) {
+      toast({
+        title: "Update Failed",
+        description: "Failed to update profile. Please try again.",
+        variant: "destructive"
+      });
+    }
   };
 
   const handleInputChange = (field: string, value: string) => {
@@ -52,7 +113,7 @@ const Profile = () => {
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar />
-        
+
         <main className="flex-1 overflow-auto">
           {/* Header */}
           <header className="bg-white dark:bg-card border-b border-border p-4 lg:p-6">
@@ -97,8 +158,8 @@ const Profile = () => {
                       </div>
                     </div>
                   </div>
-                  <Button 
-                    variant={isEditing ? "success" : "outline"} 
+                  <Button
+                    variant={isEditing ? "success" : "outline"}
                     onClick={isEditing ? handleSave : () => setIsEditing(true)}
                     className="gap-2"
                   >
@@ -251,13 +312,13 @@ const Profile = () => {
                     <p className="text-sm text-muted-foreground mb-3">Choose your preferred language</p>
                     <Badge variant="outline">Hindi + English</Badge>
                   </div>
-                  
+
                   <div className="p-4 bg-muted/50 rounded-lg">
                     <h4 className="font-semibold mb-2">Notifications</h4>
                     <p className="text-sm text-muted-foreground mb-3">WhatsApp & SMS alerts</p>
                     <Badge variant="outline" className="bg-success-muted text-success">Enabled</Badge>
                   </div>
-                  
+
                   <div className="p-4 bg-muted/50 rounded-lg">
                     <h4 className="font-semibold mb-2">Voice Commands</h4>
                     <p className="text-sm text-muted-foreground mb-3">Voice-to-text features</p>

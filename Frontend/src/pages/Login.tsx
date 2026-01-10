@@ -6,6 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Smartphone, Shield, ArrowRight } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { authAPI } from "@/lib/api";
 
 const Login = () => {
   const [phone, setPhone] = useState("");
@@ -13,6 +15,7 @@ const Login = () => {
   const [step, setStep] = useState<"phone" | "otp">("phone");
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const handleSendOTP = async () => {
     if (!phone || phone.length < 10) {
@@ -25,15 +28,24 @@ const Login = () => {
     }
 
     setIsLoading(true);
-    // Simulate API call
-    setTimeout(() => {
-      setIsLoading(false);
-      setStep("otp");
+    try {
+      const response = await authAPI.sendOTP(phone);
+      if (response.data.success) {
+        setStep("otp");
+        toast({
+          title: "OTP Sent!",
+          description: "Please check your phone for the verification code",
+        });
+      }
+    } catch (error: any) {
       toast({
-        title: "OTP Sent!",
-        description: "Please check your phone for the verification code",
+        title: "Error",
+        description: error.response?.data?.message || "Failed to send OTP",
+        variant: "destructive",
       });
-    }, 1500);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleVerifyOTP = async () => {
@@ -47,15 +59,28 @@ const Login = () => {
     }
 
     setIsLoading(true);
-    // Simulate API call
-    setTimeout(() => {
-      setIsLoading(false);
+    try {
+      const response = await login(phone, otp);
+
       toast({
         title: "Login Successful!",
         description: "Welcome to Vyapaar - AI",
       });
-      navigate("/dashboard");
-    }, 1500);
+
+      // Redirect based on vendor profile status
+      if (response.hasVendorProfile) {
+        navigate("/dashboard");
+      } else {
+        navigate("/complete-signup");
+      }
+    } catch (error: any) {
+      toast({
+        title: "Verification Failed",
+        description: error.response?.data?.message || "Invalid OTP. Please try again.",
+        variant: "destructive",
+      });
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -75,8 +100,8 @@ const Login = () => {
               {step === "phone" ? "Login to Continue" : "Verify OTP"}
             </CardTitle>
             <CardDescription>
-              {step === "phone" 
-                ? "Enter your phone number to get started" 
+              {step === "phone"
+                ? "Enter your phone number to get started"
                 : `Code sent to +91 ${phone}`
               }
             </CardDescription>
@@ -102,9 +127,9 @@ const Login = () => {
                   </div>
                 </div>
 
-                <Button 
-                  variant="hero" 
-                  size="lg" 
+                <Button
+                  variant="hero"
+                  size="lg"
                   className="w-full"
                   onClick={handleSendOTP}
                   disabled={isLoading}
@@ -128,17 +153,17 @@ const Login = () => {
                 </div>
 
                 <div className="flex gap-3">
-                  <Button 
-                    variant="outline" 
-                    size="lg" 
+                  <Button
+                    variant="outline"
+                    size="lg"
                     className="flex-1"
                     onClick={() => setStep("phone")}
                   >
                     Back
                   </Button>
-                  <Button 
-                    variant="hero" 
-                    size="lg" 
+                  <Button
+                    variant="hero"
+                    size="lg"
                     className="flex-1"
                     onClick={handleVerifyOTP}
                     disabled={isLoading}
@@ -147,9 +172,9 @@ const Login = () => {
                   </Button>
                 </div>
 
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
+                <Button
+                  variant="ghost"
+                  size="sm"
                   className="w-full"
                   onClick={handleSendOTP}
                 >

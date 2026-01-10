@@ -19,81 +19,147 @@ export function VoiceReminderButton({ onReminderCreated, variant = "default" }: 
   const [progress, setProgress] = useState(0);
   const { toast } = useToast();
 
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
+
   const startListening = async () => {
     try {
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      // Create MediaRecorder
+      const recorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm' // Most browsers support this
+      });
+
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        // Stop all tracks
+        stream.getTracks().forEach(track => track.stop());
+
+        // Create audio blob
+        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+
+        // Process the audio
+        await processVoiceInput(audioBlob);
+      };
+
+      recorder.start();
+      setMediaRecorder(recorder);
       setIsListening(true);
       setTranscript("");
       setProgress(0);
 
-      // Simulate voice recognition process
+      // Animate progress while recording
       const interval = setInterval(() => {
         setProgress(prev => {
-          if (prev >= 100) {
+          if (prev >= 90) {
             clearInterval(interval);
-            return 100;
+            return 90;
           }
-          return prev + 10;
+          return prev + 5;
         });
-      }, 300);
+      }, 200);
 
-      // Simulate voice input
-      setTimeout(() => {
-        setTranscript("Send Ramesh a 1200 rupees reminder for Friday");
-        clearInterval(interval);
-        setIsListening(false);
-        processVoiceInput("Send Ramesh a 1200 rupees reminder for Friday");
-      }, 3000);
+      // Store interval for cleanup
+      (recorder as any).progressInterval = interval;
 
     } catch (error) {
+      console.error('Microphone access error:', error);
       toast({
-        title: "Voice Recognition Error",
-        description: "Could not access microphone. Please check permissions.",
+        title: "Microphone Access Denied",
+        description: "Please allow microphone access to use voice commands.",
         variant: "destructive",
       });
       setIsListening(false);
     }
   };
 
-  const processVoiceInput = async (text: string) => {
+  const stopListening = () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      // Clear progress interval
+      const interval = (mediaRecorder as any).progressInterval;
+      if (interval) clearInterval(interval);
+
+      mediaRecorder.stop();
+      setIsListening(false);
+      setProgress(100);
+    }
+  };
+
+  const processVoiceInput = async (audioBlob: Blob) => {
     setIsProcessing(true);
 
     try {
-      // Simulate AI processing to extract customer name, amount, and date
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Get auth token
+      const token = localStorage.getItem('auth_token');
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
 
-      const extractedData = {
-        id: Date.now().toString(),
-        customerName: "Ramesh Kumar",
-        amount: "₹1,200",
-        dueDate: "Friday",
-        phone: "+91 98765 43210",
-        status: "pending" as const,
-        originalText: text,
-        createdAt: new Date().toISOString()
-      };
+      // Create FormData and append audio file
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'voice-command.webm');
 
-      onReminderCreated?.(extractedData);
-
-      toast({
-        title: "Voice Reminder Created",
-        description: `Payment reminder for ${extractedData.customerName} has been created.`,
+      // Send to backend for processing - FIXED PORT TO 5000
+      const response = await fetch('http://localhost:5000/api/voice/process-command', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
       });
 
-    } catch (error) {
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to process voice command');
+      }
+
+      const data = await response.json();
+
+      // Set the transcribed text
+      setTranscript(data.transcribedText || '');
+
+      // Handle the result based on action type
+      if (data.action === 'CREATE_PAYMENT_REMINDER' && data.data) {
+        // Create reminder object matching the Reminder type
+        const reminder: Reminder = {
+          id: data.data.id,
+          customerName: data.data.customerName,
+          amount: `₹${data.data.amount}`,
+          dueDate: new Date(data.data.dueDate).toLocaleDateString(),
+          phone: data.data.phone || '',
+          status: data.data.status,
+          originalText: data.transcribedText,
+          createdAt: new Date().toISOString()
+        };
+
+        onReminderCreated?.(reminder);
+      }
+
+      toast({
+        title: "✅ Voice Command Processed",
+        description: data.message || "Action completed successfully",
+      });
+
+    } catch (error: any) {
+      console.error('Voice processing error:', error);
       toast({
         title: "Processing Error",
-        description: "Failed to process voice input. Please try again.",
+        description: error.message || "Failed to process voice input. Please try again.",
         variant: "destructive",
       });
     } finally {
       setIsProcessing(false);
       setProgress(0);
     }
-  };
-
-  const stopListening = () => {
-    setIsListening(false);
-    setProgress(0);
   };
 
   if (variant === "sm") {

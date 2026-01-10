@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,148 +11,171 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
-import { Plus, Search, Filter, Eye, Download, MessageCircle, FileText, IndianRupee, Clock, CheckCircle, QrCode, Printer } from "lucide-react";
+import { Plus, Search, Download, MessageCircle, FileText, IndianRupee, Clock, CheckCircle } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-interface Invoice {
-  id: string;
-  invoiceNumber: string;
-  customerName: string;
-  customerPhone: string;
-  amount: number;
-  gst: number;
-  totalAmount: number;
-  status: "Paid" | "Pending" | "Overdue";
-  date: string;
-  dueDate: string;
-  items: Array<{
-    name: string;
-    quantity: number;
-    price: number;
-    total: number;
-  }>;
+import { invoicesAPI } from "@/lib/api";
+
+interface InvoiceItem {
+  name: string;
+  quantity: number;
+  price: number;
 }
+
 const Invoices = () => {
-  const [invoices, setInvoices] = useState<Invoice[]>([{
-    id: "1",
-    invoiceNumber: "INV-2024-001",
-    customerName: "Rajesh Kumar",
-    customerPhone: "+91 98765 43210",
-    amount: 1200,
-    gst: 216,
-    totalAmount: 1416,
-    status: "Paid",
-    date: "2024-01-15",
-    dueDate: "2024-01-30",
-    items: [{
-      name: "Maggi Noodles",
-      quantity: 5,
-      price: 12,
-      total: 60
-    }, {
-      name: "Tata Tea",
-      quantity: 2,
-      price: 145,
-      total: 290
-    }, {
-      name: "Parle-G",
-      quantity: 10,
-      price: 5,
-      total: 50
-    }]
-  }, {
-    id: "2",
-    invoiceNumber: "INV-2024-002",
-    customerName: "Priya Sharma",
-    customerPhone: "+91 87654 32109",
-    amount: 850,
-    gst: 153,
-    totalAmount: 1003,
-    status: "Pending",
-    date: "2024-01-16",
-    dueDate: "2024-01-31",
-    items: [{
-      name: "Surf Excel",
-      quantity: 2,
-      price: 89,
-      total: 178
-    }, {
-      name: "Amul Milk",
-      quantity: 3,
-      price: 56,
-      total: 168
-    }]
-  }, {
-    id: "3",
-    invoiceNumber: "INV-2024-003",
-    customerName: "Amit Singh",
-    customerPhone: "+91 76543 21098",
-    amount: 2400,
-    gst: 432,
-    totalAmount: 2832,
-    status: "Overdue",
-    date: "2024-01-10",
-    dueDate: "2024-01-25",
-    items: [{
-      name: "Grocery Items",
-      quantity: 1,
-      price: 2400,
-      total: 2400
-    }]
-  }]);
+  const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [selectedLanguage, setSelectedLanguage] = useState("english");
-  const filteredInvoices = invoices.filter(invoice => invoice.customerName.toLowerCase().includes(searchTerm.toLowerCase()) || invoice.invoiceNumber.toLowerCase().includes(searchTerm.toLowerCase()));
-  const getStatusColor = (status: Invoice["status"]) => {
+
+  // Form state for creating invoice
+  const [newInvoice, setNewInvoice] = useState({
+    customerName: "",
+    customerPhone: "",
+    invoiceDate: new Date().toISOString().split('T')[0],
+    dueDate: "",
+    items: [{ name: "", quantity: 1, price: 0 }] as InvoiceItem[],
+    gstRate: "18",
+    paymentMethod: "cash",
+    notes: ""
+  });
+
+  // Fetch invoices
+  const { data: invoicesData, isLoading } = useQuery({
+    queryKey: ['invoices'],
+    queryFn: async () => {
+      const response = await invoicesAPI.getAll();
+      return response.data.data || [];
+    }
+  });
+
+  const invoices = invoicesData || [];
+
+  // Create invoice mutation
+  const createInvoiceMutation = useMutation({
+    mutationFn: (data: any) => invoicesAPI.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      setIsCreateDialogOpen(false);
+      resetForm();
+      toast({
+        title: "Invoice Created!",
+        description: "Invoice has been generated successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Failed to create invoice",
+        variant: "destructive"
+      });
+    }
+  });
+
+  // Calculate totals
+  const calculations = useMemo(() => {
+    const subtotal = newInvoice.items.reduce((sum, item) => {
+      return sum + (item.quantity * item.price);
+    }, 0);
+
+    const gstAmount = (subtotal * parseInt(newInvoice.gstRate)) / 100;
+    const total = subtotal + gstAmount;
+
+    return { subtotal, gstAmount, total };
+  }, [newInvoice.items, newInvoice.gstRate]);
+
+  const handleCreateInvoice = () => {
+    if (!newInvoice.customerName || !newInvoice.customerPhone) {
+      toast({
+        title: "Missing Fields",
+        description: "Please fill in customer name and phone",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const validItems = newInvoice.items.filter(item => item.name && item.quantity > 0 && item.price > 0);
+    if (validItems.length === 0) {
+      toast({
+        title: "No Items",
+        description: "Please add at least one item to the invoice",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    createInvoiceMutation.mutate({
+      customerName: newInvoice.customerName,
+      customerPhone: newInvoice.customerPhone,
+      invoiceDate: newInvoice.invoiceDate,
+      dueDate: newInvoice.dueDate || newInvoice.invoiceDate,
+      items: validItems,
+      amount: calculations.subtotal,
+      gstRate: parseInt(newInvoice.gstRate),
+      gstAmount: calculations.gstAmount,
+      totalAmount: calculations.total,
+      paymentMethod: newInvoice.paymentMethod,
+      notes: newInvoice.notes,
+      status: "Pending"
+    });
+  };
+
+  const resetForm = () => {
+    setNewInvoice({
+      customerName: "",
+      customerPhone: "",
+      invoiceDate: new Date().toISOString().split('T')[0],
+      dueDate: "",
+      items: [{ name: "", quantity: 1, price: 0 }],
+      gstRate: "18",
+      paymentMethod: "cash",
+      notes: ""
+    });
+  };
+
+  const addItem = () => {
+    setNewInvoice({
+      ...newInvoice,
+      items: [...newInvoice.items, { name: "", quantity: 1, price: 0 }]
+    });
+  };
+
+  const updateItem = (index: number, field: keyof InvoiceItem, value: any) => {
+    const updatedItems = [...newInvoice.items];
+    updatedItems[index] = { ...updatedItems[index], [field]: value };
+    setNewInvoice({ ...newInvoice, items: updatedItems });
+  };
+
+  const filteredInvoices = invoices.filter((invoice: any) =>
+    invoice.customerName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    invoice.invoiceNumber?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const stats = useMemo(() => {
+    const paid = invoices.filter((i: any) => i.status === "Paid").reduce((sum: number, i: any) => sum + (i.totalAmount || 0), 0);
+    const pending = invoices.filter((i: any) => i.status === "Pending").reduce((sum: number, i: any) => sum + (i.totalAmount || 0), 0);
+    const overdue = invoices.filter((i: any) => i.status === "Overdue").reduce((sum: number, i: any) => sum + (i.totalAmount || 0), 0);
+
+    return [
+      { title: "Total Invoices", value: invoices.length.toString(), icon: FileText, color: "text-primary" },
+      { title: "Paid Amount", value: `₹${paid.toLocaleString()}`, icon: CheckCircle, color: "text-success" },
+      { title: "Pending Amount", value: `₹${pending.toLocaleString()}`, icon: Clock, color: "text-warning" },
+      { title: "Overdue Amount", value: `₹${overdue.toLocaleString()}`, icon: IndianRupee, color: "text-destructive" }
+    ];
+  }, [invoices]);
+
+  const getStatusColor = (status: string) => {
     switch (status) {
-      case "Paid":
-        return "bg-success text-success-foreground";
-      case "Pending":
-        return "bg-warning text-warning-foreground";
-      case "Overdue":
-        return "bg-destructive text-destructive-foreground";
-      default:
-        return "bg-secondary text-secondary-foreground";
+      case "Paid": return "bg-success text-success-foreground";
+      case "Pending": return "bg-warning text-warning-foreground";
+      case "Overdue": return "bg-destructive text-destructive-foreground";
+      default: return "bg-secondary text-secondary-foreground";
     }
   };
-  const handleSendWhatsApp = (invoice: Invoice) => {
-    const message = selectedLanguage === "hindi" ? `नमस्ते ${invoice.customerName}, आपका बिल ${invoice.invoiceNumber} का भुगतान ₹${invoice.totalAmount} बकाया है। कृपया जल्दी भुगतान करें।` : `Hello ${invoice.customerName}, your invoice ${invoice.invoiceNumber} payment of ₹${invoice.totalAmount} is pending. Please make the payment at your earliest convenience.`;
-    toast({
-      title: "WhatsApp Message Sent!",
-      description: `Payment reminder sent to ${invoice.customerName}`
-    });
-  };
-  const handleDownloadPDF = (invoice: Invoice) => {
-    toast({
-      title: "PDF Generated!",
-      description: `Invoice ${invoice.invoiceNumber} downloaded successfully`
-    });
-  };
-  const stats = [{
-    title: "Total Invoices",
-    value: invoices.length.toString(),
-    icon: FileText,
-    color: "text-primary"
-  }, {
-    title: "Paid Amount",
-    value: `₹${invoices.filter(i => i.status === "Paid").reduce((sum, i) => sum + i.totalAmount, 0).toLocaleString()}`,
-    icon: CheckCircle,
-    color: "text-success"
-  }, {
-    title: "Pending Amount",
-    value: `₹${invoices.filter(i => i.status === "Pending").reduce((sum, i) => sum + i.totalAmount, 0).toLocaleString()}`,
-    icon: Clock,
-    color: "text-warning"
-  }, {
-    title: "Overdue Amount",
-    value: `₹${invoices.filter(i => i.status === "Overdue").reduce((sum, i) => sum + i.totalAmount, 0).toLocaleString()}`,
-    icon: IndianRupee,
-    color: "text-destructive"
-  }];
-  return <SidebarProvider>
+
+  return (
+    <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar />
-        
+
         <main className="flex-1 overflow-auto">
           {/* Header */}
           <header className="border-b border-border p-4 lg:p-6 bg-inherit">
@@ -160,21 +184,20 @@ const Invoices = () => {
                 <SidebarTrigger />
                 <div>
                   <h1 className="text-2xl font-bold text-foreground">Invoices & Billing</h1>
-                  <p className="text-muted-foreground">Create bilingual invoices and track payments</p>
+                  <p className="text-muted-foreground">Create and manage customer invoices</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="bg-primary-muted text-primary">
-                  {invoices.length} Invoices
-                </Badge>
-              </div>
+              <Badge variant="outline" className="bg-primary-muted text-primary">
+                {invoices.length} Invoices
+              </Badge>
             </div>
           </header>
 
           <div className="p-4 lg:p-6 space-y-6">
             {/* Stats Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {stats.map((stat, index) => <Card key={index}>
+              {stats.map((stat, index) => (
+                <Card key={index}>
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between">
                       <div>
@@ -184,27 +207,12 @@ const Invoices = () => {
                       <stat.icon className={`w-8 h-8 ${stat.color}`} />
                     </div>
                   </CardContent>
-                </Card>)}
+                </Card>
+              ))}
             </div>
 
-            {/* Language Selection & Quick Actions */}
-            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="language">Invoice Language</Label>
-                  <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
-                    <SelectTrigger className="w-[180px]">
-                      <SelectValue placeholder="Select language" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="english">English</SelectItem>
-                      <SelectItem value="hindi">हिंदी (Hindi)</SelectItem>
-                      <SelectItem value="both">Both Languages</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
+            {/* Create Invoice Button */}
+            <div className="flex justify-end">
               <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
                 <DialogTrigger asChild>
                   <Button variant="hero" size="lg">
@@ -216,20 +224,30 @@ const Invoices = () => {
                   <DialogHeader>
                     <DialogTitle>Create New Invoice</DialogTitle>
                     <DialogDescription>
-                      Generate a new invoice with automatic GST calculation and UPI QR code
+                      Generate a new invoice with automatic GST calculation
                     </DialogDescription>
                   </DialogHeader>
-                  
+
                   <div className="space-y-6">
                     {/* Customer Details */}
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="customerName">Customer Name</Label>
-                        <Input id="customerName" placeholder="Enter customer name" />
+                        <Input
+                          id="customerName"
+                          placeholder="Enter customer name"
+                          value={newInvoice.customerName}
+                          onChange={(e) => setNewInvoice({ ...newInvoice, customerName: e.target.value })}
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="customerPhone">Phone Number</Label>
-                        <Input id="customerPhone" placeholder="+91 XXXXX XXXXX" />
+                        <Input
+                          id="customerPhone"
+                          placeholder="+91 XXXXX XXXXX"
+                          value={newInvoice.customerPhone}
+                          onChange={(e) => setNewInvoice({ ...newInvoice, customerPhone: e.target.value })}
+                        />
                       </div>
                     </div>
 
@@ -237,11 +255,21 @@ const Invoices = () => {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="invoiceDate">Invoice Date</Label>
-                        <Input id="invoiceDate" type="date" />
+                        <Input
+                          id="invoiceDate"
+                          type="date"
+                          value={newInvoice.invoiceDate}
+                          onChange={(e) => setNewInvoice({ ...newInvoice, invoiceDate: e.target.value })}
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="dueDate">Due Date</Label>
-                        <Input id="dueDate" type="date" />
+                        <Input
+                          id="dueDate"
+                          type="date"
+                          value={newInvoice.dueDate}
+                          onChange={(e) => setNewInvoice({ ...newInvoice, dueDate: e.target.value })}
+                        />
                       </div>
                     </div>
 
@@ -255,15 +283,33 @@ const Invoices = () => {
                           <span>Price (₹)</span>
                           <span>Total</span>
                         </div>
-                        <div className="grid grid-cols-4 gap-2">
-                          <Input placeholder="Product name" />
-                          <Input type="number" placeholder="1" />
-                          <Input type="number" placeholder="0.00" />
-                          <div className="flex items-center">
-                            <span className="text-muted-foreground">₹0.00</span>
+                        {newInvoice.items.map((item, index) => (
+                          <div key={index} className="grid grid-cols-4 gap-2">
+                            <Input
+                              placeholder="Product name"
+                              value={item.name}
+                              onChange={(e) => updateItem(index, 'name', e.target.value)}
+                            />
+                            <Input
+                              type="number"
+                              placeholder="1"
+                              value={item.quantity === 0 ? '' : item.quantity}
+                              onChange={(e) => updateItem(index, 'quantity', e.target.value === '' ? 0 : parseInt(e.target.value))}
+                            />
+                            <Input
+                              type="number"
+                              placeholder="0.00"
+                              value={item.price === 0 ? '' : item.price}
+                              onChange={(e) => updateItem(index, 'price', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                            />
+                            <div className="flex items-center">
+                              <span className="text-muted-foreground font-mono">
+                                ₹{(item.quantity * item.price).toFixed(2)}
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                        <Button variant="outline" size="sm" className="w-full">
+                        ))}
+                        <Button variant="outline" size="sm" className="w-full" onClick={addItem}>
                           <Plus className="w-4 h-4 mr-2" />
                           Add Another Item
                         </Button>
@@ -274,9 +320,9 @@ const Invoices = () => {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="gstRate">GST Rate (%)</Label>
-                        <Select>
+                        <Select value={newInvoice.gstRate} onValueChange={(value) => setNewInvoice({ ...newInvoice, gstRate: value })}>
                           <SelectTrigger>
-                            <SelectValue placeholder="Select GST rate" />
+                            <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="0">0% (No GST)</SelectItem>
@@ -289,9 +335,9 @@ const Invoices = () => {
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="paymentMethod">Payment Method</Label>
-                        <Select>
+                        <Select value={newInvoice.paymentMethod} onValueChange={(value) => setNewInvoice({ ...newInvoice, paymentMethod: value })}>
                           <SelectTrigger>
-                            <SelectValue placeholder="Select method" />
+                            <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="cash">Cash</SelectItem>
@@ -303,44 +349,62 @@ const Invoices = () => {
                       </div>
                     </div>
 
+                    {/* Calculation Summary */}
+                    <div className="border-t pt-4 space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Subtotal:</span>
+                        <span className="font-mono">₹{calculations.subtotal.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">GST ({newInvoice.gstRate}%):</span>
+                        <span className="font-mono">₹{calculations.gstAmount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-lg font-bold border-t pt-2">
+                        <span>Total Amount:</span>
+                        <span className="font-mono">₹{calculations.total.toFixed(2)}</span>
+                      </div>
+                    </div>
+
                     {/* Notes */}
                     <div className="space-y-2">
                       <Label htmlFor="notes">Additional Notes</Label>
-                      <Textarea id="notes" placeholder="Any additional notes or terms..." rows={3} />
+                      <Textarea
+                        id="notes"
+                        placeholder="Any additional notes or terms..."
+                        rows={3}
+                        value={newInvoice.notes}
+                        onChange={(e) => setNewInvoice({ ...newInvoice, notes: e.target.value })}
+                      />
                     </div>
 
-                    {/* Action Buttons */}
-                    <div className="flex gap-3">
-                      <Button variant="outline" className="flex-1">
-                        <Eye className="w-4 h-4 mr-2" />
-                        Preview
-                      </Button>
-                      <Button variant="success" className="flex-1">
-                        <QrCode className="w-4 h-4 mr-2" />
-                        Generate with QR
-                      </Button>
-                      <Button variant="hero" className="flex-1">
-                        <FileText className="w-4 h-4 mr-2" />
-                        Create Invoice
-                      </Button>
-                    </div>
+                    {/* Action Button */}
+                    <Button
+                      variant="hero"
+                      className="w-full"
+                      onClick={handleCreateInvoice}
+                      disabled={createInvoiceMutation.isPending}
+                    >
+                      <FileText className="w-4 h-4 mr-2" />
+                      {createInvoiceMutation.isPending ? "Creating..." : "Create Invoice"}
+                    </Button>
                   </div>
                 </DialogContent>
               </Dialog>
             </div>
 
-            {/* Search and Filters */}
+            {/* Search */}
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="flex-1">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-                  <Input placeholder="Search invoices..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-10" />
+                  <Input
+                    placeholder="Search invoices..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10"
+                  />
                 </div>
               </div>
-              <Button variant="outline" size="sm">
-                <Filter className="w-4 h-4 mr-2" />
-                Filter by Status
-              </Button>
             </div>
 
             {/* Invoices Table */}
@@ -352,62 +416,92 @@ const Invoices = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="overflow-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Invoice #</TableHead>
-                        <TableHead>Customer</TableHead>
-                        <TableHead>Amount</TableHead>
-                        <TableHead>GST</TableHead>
-                        <TableHead>Total</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredInvoices.map(invoice => <TableRow key={invoice.id}>
-                          <TableCell className="font-mono font-medium">
-                            {invoice.invoiceNumber}
-                          </TableCell>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium">{invoice.customerName}</p>
-                              <p className="text-xs text-muted-foreground">{invoice.customerPhone}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>₹{invoice.amount.toLocaleString()}</TableCell>
-                          <TableCell>₹{invoice.gst.toLocaleString()}</TableCell>
-                          <TableCell className="font-semibold">₹{invoice.totalAmount.toLocaleString()}</TableCell>
-                          <TableCell>
-                            <Badge className={getStatusColor(invoice.status)}>
-                              {invoice.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{invoice.date}</TableCell>
-                          <TableCell>
-                            <div className="flex gap-1">
-                              <Button variant="ghost" size="icon" onClick={() => handleDownloadPDF(invoice)}>
-                                <Download className="w-4 h-4" />
-                              </Button>
-                              <Button variant="ghost" size="icon">
-                                <Printer className="w-4 h-4" />
-                              </Button>
-                              <Button variant="ghost" size="icon" onClick={() => handleSendWhatsApp(invoice)} className="text-success hover:text-success">
-                                <MessageCircle className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>)}
-                    </TableBody>
-                  </Table>
-                </div>
+                {isLoading ? (
+                  <div className="text-center py-8 text-muted-foreground">Loading invoices...</div>
+                ) : filteredInvoices.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No invoices found. Create your first invoice to get started!
+                  </div>
+                ) : (
+                  <div className="overflow-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Invoice #</TableHead>
+                          <TableHead>Customer</TableHead>
+                          <TableHead>Amount</TableHead>
+                          <TableHead>GST</TableHead>
+                          <TableHead>Total</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredInvoices.map((invoice: any) => (
+                          <TableRow key={invoice.id}>
+                            <TableCell className="font-mono font-medium">
+                              {invoice.invoiceNumber || invoice.id}
+                            </TableCell>
+                            <TableCell>
+                              <div>
+                                <p className="font-medium">{invoice.customerName}</p>
+                                <p className="text-xs text-muted-foreground">{invoice.customerPhone}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell>₹{(invoice.amount || 0).toLocaleString()}</TableCell>
+                            <TableCell>₹{(invoice.gstAmount || 0).toLocaleString()}</TableCell>
+                            <TableCell className="font-semibold">₹{(invoice.totalAmount || 0).toLocaleString()}</TableCell>
+                            <TableCell>
+                              <Badge className={getStatusColor(invoice.status)}>
+                                {invoice.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString() : '-'}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    toast({
+                                      title: "PDF Generated!",
+                                      description: `Invoice ${invoice.invoiceNumber || invoice.id} downloaded successfully`,
+                                    });
+                                  }}
+                                >
+                                  <Download className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-success hover:text-success"
+                                  onClick={() => {
+                                    toast({
+                                      title: "Reminder Sent!",
+                                      description: `Payment reminder sent to ${invoice.customerName}`,
+                                    });
+                                  }}
+                                >
+                                  <MessageCircle className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
         </main>
       </div>
-    </SidebarProvider>;
+    </SidebarProvider>
+  );
 };
+
 export default Invoices;

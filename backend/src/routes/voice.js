@@ -1,15 +1,17 @@
 import express from 'express';
 import multer from 'multer';
 import OpenAI from 'openai';
-import { 
-  addInventoryItem, 
-  addPaymentReminder 
+import {
+  addInventoryItem,
+  addPaymentReminder,
+  createSale
 } from '../config/database.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, requireVendor } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.use(authenticateToken);
+router.use(requireVendor);
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -45,7 +47,7 @@ router.post('/process-command', upload.single('audio'), async (req, res) => {
     const transcription = await openai.audio.transcriptions.create({
       file: audioFile,
       model: 'whisper-1',
-      language: 'en'
+      language: req.vendor.preferredLanguage || 'en'
     });
 
     const transcribedText = transcription.text;
@@ -56,7 +58,7 @@ You are an AI assistant for a business management system. Analyze the following 
 Voice command: "${transcribedText}"
 
 Please respond with a JSON object containing:
-1. intent: Either "ADD_INVENTORY" or "CREATE_PAYMENT_REMINDER"
+1. intent: Either "ADD_INVENTORY", "CREATE_PAYMENT_REMINDER", or "CREATE_SALE"
 2. extracted_data: Object with relevant fields based on the intent
 
 For ADD_INVENTORY intent, extract:
@@ -70,6 +72,12 @@ For CREATE_PAYMENT_REMINDER intent, extract:
 - amount: payment amount
 - dueDate: due date (if mentioned, otherwise use "today")
 - phone: phone number (if mentioned)
+
+For CREATE_SALE intent, extract:
+- customerName: customer name (optional)
+- items: array of {name, quantity, price}
+- paymentMethod: cash/upi/card (optional)
+- totalAmount: total sale amount
 
 Examples:
 - "Add 10 Maggi packets at 12 rupees each" -> ADD_INVENTORY
@@ -99,7 +107,7 @@ Respond only with valid JSON, no additional text.
 
     if (intent === 'ADD_INVENTORY') {
       const { name, quantity, price, category } = extracted_data;
-      
+
       if (!name || !quantity || !price) {
         return res.status(400).json({
           error: 'Incomplete inventory data',
@@ -116,8 +124,8 @@ Respond only with valid JSON, no additional text.
         threshold: 10
       };
 
-      const addResult = await addInventoryItem(req.user.uid, itemData);
-      
+      const addResult = await addInventoryItem(req.user.uid, itemData, req.vendor.id);
+
       result = {
         action: 'ADD_INVENTORY',
         message: `Added ${quantity} units of ${name} to inventory`,
@@ -126,7 +134,7 @@ Respond only with valid JSON, no additional text.
 
     } else if (intent === 'CREATE_PAYMENT_REMINDER') {
       const { customerName, amount, dueDate, phone } = extracted_data;
-      
+
       if (!customerName || !amount) {
         return res.status(400).json({
           error: 'Incomplete payment data',
@@ -148,12 +156,46 @@ Respond only with valid JSON, no additional text.
         originalText: transcribedText
       };
 
-      const addResult = await addPaymentReminder(req.user.uid, reminderData);
-      
+      const addResult = await addPaymentReminder(req.user.uid, reminderData, req.vendor.id);
+
       result = {
         action: 'CREATE_PAYMENT_REMINDER',
         message: `Created payment reminder for ${customerName} - ₹${amount}`,
         data: { id: addResult.id, ...reminderData }
+      };
+
+    } else if (intent === 'CREATE_SALE') {
+      const { customerName, items, paymentMethod, totalAmount } = extracted_data;
+
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({
+          error: 'Incomplete sale data',
+          message: 'Could not extract items information from voice command',
+          code: 'INCOMPLETE_SALE_DATA'
+        });
+      }
+
+      const saleData = {
+        customerName: customerName?.trim() || 'Walk-in Customer',
+        items: items.map(item => ({
+          name: item.name?.trim() || '',
+          quantity: parseInt(item.quantity) || 0,
+          price: parseFloat(item.price) || 0,
+          total: (parseInt(item.quantity) || 0) * (parseFloat(item.price) || 0)
+        })),
+        paymentMethod: paymentMethod || 'cash',
+        totalAmount: parseFloat(totalAmount) || items.reduce((sum, item) =>
+          sum + ((parseInt(item.quantity) || 0) * (parseFloat(item.price) || 0)), 0
+        ),
+        saleDate: new Date()
+      };
+
+      const addResult = await createSale(req.vendor.id, saleData);
+
+      result = {
+        action: 'CREATE_SALE',
+        message: `Sale recorded for ${saleData.customerName} - ₹${saleData.totalAmount}`,
+        data: { id: addResult.id, ...saleData }
       };
 
     } else {
@@ -172,7 +214,7 @@ Respond only with valid JSON, no additional text.
 
   } catch (error) {
     console.error('Voice processing error:', error);
-    
+
     if (error.message === 'Only audio files are allowed') {
       return res.status(400).json({
         error: 'Invalid file type',

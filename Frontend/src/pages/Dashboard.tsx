@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,42 +9,80 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { VoiceReminderButton } from "@/components/VoiceReminderButton";
 import { ReminderCard } from "@/components/ReminderCard";
 import { useToast } from "@/hooks/use-toast";
-import { Reminder } from "@/types";
+import { useAuth } from "@/contexts/AuthContext";
+import { dashboardAPI, inventoryAPI, paymentsAPI } from "@/lib/api";
+import { Reminder, DashboardStats } from "@/types";
+import { useQuery } from "@tanstack/react-query";
+
 const Dashboard = () => {
   const [isListening, setIsListening] = useState(false);
   const [reminders, setReminders] = useState<Reminder[]>([]);
-  const {
-    toast
-  } = useToast();
-  const stats = [{
-    title: "Today's Sales",
-    value: "₹15,240",
-    change: "+12%",
-    isPositive: true,
-    icon: IndianRupee,
-    description: "15 transactions"
-  }, {
-    title: "This Week",
-    value: "₹89,530",
-    change: "+8%",
-    isPositive: true,
-    icon: TrendingUp,
-    description: "89 transactions"
-  }, {
-    title: "Pending Payments",
-    value: "₹12,400",
-    change: "5 customers",
-    isPositive: false,
-    icon: AlertTriangle,
-    description: "Due this week"
-  }, {
-    title: "Low Stock Items",
-    value: "8",
-    change: "Action needed",
-    isPositive: false,
-    icon: Package,
-    description: "Items below threshold"
-  }];
+  const { toast } = useToast();
+  const { vendor } = useAuth();
+
+  // Fetch dashboard stats
+  const { data: dashboardData, isLoading, error } = useQuery({
+    queryKey: ['dashboard-stats'],
+    queryFn: async () => {
+      const response = await dashboardAPI.getStats();
+      return response.data.data as DashboardStats;
+    },
+    refetchInterval: 30000, // Refetch every 30 seconds
+  });
+
+  // Fetch inventory for AI insights
+  const { data: inventoryData } = useQuery({
+    queryKey: ['inventory'],
+    queryFn: async () => {
+      const response = await inventoryAPI.getAll();
+      return response.data.data || [];
+    }
+  });
+
+  // Fetch payments for AI insights
+  const { data: paymentsData } = useQuery({
+    queryKey: ['payment-reminders'],
+    queryFn: async () => {
+      const response = await paymentsAPI.getAll();
+      return response.data.data || [];
+    }
+  });
+
+  const stats = dashboardData ? [
+    {
+      title: "Today's Sales",
+      value: `₹${dashboardData.todaySales.value.toLocaleString()}`,
+      change: dashboardData.todaySales.change,
+      isPositive: true,
+      icon: IndianRupee,
+      description: `${dashboardData.todaySales.transactions} transactions`
+    },
+    {
+      title: "This Week",
+      value: `₹${dashboardData.thisWeekSales.value.toLocaleString()}`,
+      change: dashboardData.thisWeekSales.change,
+      isPositive: true,
+      icon: TrendingUp,
+      description: `${dashboardData.thisWeekSales.transactions} transactions`
+    },
+    {
+      title: "Pending Payments",
+      value: `₹${dashboardData.pendingPayments.value.toLocaleString()}`,
+      change: dashboardData.pendingPayments.change,
+      isPositive: false,
+      icon: AlertTriangle,
+      description: "Due this week"
+    },
+    {
+      title: "Low Stock Items",
+      value: String(dashboardData.lowStockItems.count),
+      change: "Action needed",
+      isPositive: false,
+      icon: Package,
+      description: "Items below threshold"
+    }
+  ] : [];
+
   const quickActions = [{
     title: "Voice Add Inventory",
     description: "Add products using voice commands",
@@ -56,42 +94,23 @@ const Dashboard = () => {
     title: "Generate Invoice",
     description: "Create new bill for customer",
     icon: FileText,
-    action: () => { },
+    action: () => window.location.href = '/invoices',
     variant: "hero" as const
   }, {
     title: "Send Payment Reminder",
     description: "WhatsApp reminder to customers",
     icon: MessageCircle,
-    action: () => { },
+    action: () => window.location.href = '/payments',
     variant: "success" as const
   }, {
     title: "View Reports",
     description: "Business insights and analytics",
     icon: BarChart3,
-    action: () => { },
+    action: () => window.location.href = '/reports',
     variant: "premium" as const
   }];
-  const recentActivity = [{
-    type: "sale",
-    customer: "Rajesh Kumar",
-    amount: "₹1,250",
-    time: "10 min ago"
-  }, {
-    type: "payment",
-    customer: "Priya Sharma",
-    amount: "₹850",
-    time: "25 min ago"
-  }, {
-    type: "inventory",
-    customer: "Stock Added",
-    amount: "20 items",
-    time: "1 hour ago"
-  }, {
-    type: "reminder",
-    customer: "Amit Singh",
-    amount: "Payment reminder sent",
-    time: "2 hours ago"
-  }];
+
+  const recentActivity = dashboardData?.recentActivity || [];
   const handleVoiceCommand = () => {
     setIsListening(true);
     // Simulate voice recognition
@@ -120,6 +139,30 @@ const Dashboard = () => {
       description: "Payment reminder has been removed."
     });
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">
+          <AlertTriangle className="h-12 w-12 text-destructive mx-auto mb-4" />
+          <p className="text-destructive">Failed to load dashboard data</p>
+          <Button onClick={() => window.location.reload()} className="mt-4">Retry</Button>
+        </div>
+      </div>
+    );
+  }
+
   return <SidebarProvider>
     <div className="flex min-h-screen w-full bg-background">
       <AppSidebar />
@@ -131,15 +174,14 @@ const Dashboard = () => {
             <div className="flex items-center gap-4">
               <SidebarTrigger />
               <div>
-                <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-                <p className="text-muted-foreground">Welcome back! Here's your business overview</p>
+                <h1 className="text-2xl font-bold text-foreground">{vendor?.shopName || "Dashboard"}</h1>
+                <p className="text-muted-foreground">Welcome back, {vendor?.ownerName || "User"}! Here's your business overview</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="bg-success-muted text-success">
-                <div className="w-2 h-2 bg-success rounded-full mr-2"></div>
-                Online
-              </Badge>
+            <div className="flex items-center gap-2">\n              <Badge variant="outline" className="bg-success-muted text-success">
+              <div className="w-2 h-2 bg-success rounded-full mr-2"></div>
+              Online
+            </Badge>
             </div>
           </div>
         </header>
@@ -147,26 +189,101 @@ const Dashboard = () => {
         <div className="p-4 lg:p-6 space-y-6">
           {/* Stats Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {stats.map((stat, index) => <Card key={index} className="hover:shadow-md transition-all duration-300">
+            <Card
+              className="hover:shadow-md transition-all duration-300 cursor-pointer"
+              onClick={() => window.location.href = '/sales'}
+            >
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div className="space-y-2">
-                    <p className="text-sm font-medium text-muted-foreground">{stat.title}</p>
-                    <p className="text-2xl font-bold">{stat.value}</p>
+                    <p className="text-sm font-medium text-muted-foreground">{stats[0].title}</p>
+                    <p className="text-2xl font-bold">{stats[0].value}</p>
                     <div className="flex items-center gap-1">
-                      {stat.isPositive ? <TrendingUp className="w-4 h-4 text-success" /> : <TrendingDown className="w-4 h-4 text-destructive" />}
-                      <span className={`text-sm ${stat.isPositive ? 'text-success' : 'text-destructive'}`}>
-                        {stat.change}
+                      {stats[0].isPositive ? <TrendingUp className="w-4 h-4 text-success" /> : <TrendingDown className="w-4 h-4 text-destructive" />}
+                      <span className={`text-sm ${stats[0].isPositive ? 'text-success' : 'text-destructive'}`}>
+                        {stats[0].change}
                       </span>
                     </div>
-                    <p className="text-xs text-muted-foreground">{stat.description}</p>
+                    <p className="text-xs text-muted-foreground">{stats[0].description}</p>
                   </div>
                   <div className="bg-primary-muted p-3 rounded-lg">
-                    <stat.icon className="w-6 h-6 text-primary" />
+                    <IndianRupee className="w-6 h-6 text-primary" />
                   </div>
                 </div>
               </CardContent>
-            </Card>)}
+            </Card>
+
+            <Card
+              className="hover:shadow-md transition-all duration-300 cursor-pointer"
+              onClick={() => window.location.href = '/sales'}
+            >
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-muted-foreground">{stats[1].title}</p>
+                    <p className="text-2xl font-bold">{stats[1].value}</p>
+                    <div className="flex items-center gap-1">
+                      {stats[1].isPositive ? <TrendingUp className="w-4 h-4 text-success" /> : <TrendingDown className="w-4 h-4 text-destructive" />}
+                      <span className={`text-sm ${stats[1].isPositive ? 'text-success' : 'text-destructive'}`}>
+                        {stats[1].change}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{stats[1].description}</p>
+                  </div>
+                  <div className="bg-primary-muted p-3 rounded-lg">
+                    <TrendingUp className="w-6 h-6 text-primary" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card
+              className="hover:shadow-md transition-all duration-300 cursor-pointer"
+              onClick={() => window.location.href = '/payments'}
+            >
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-muted-foreground">{stats[2].title}</p>
+                    <p className="text-2xl font-bold">{stats[2].value}</p>
+                    <div className="flex items-center gap-1">
+                      {stats[2].isPositive ? <TrendingUp className="w-4 h-4 text-success" /> : <TrendingDown className="w-4 h-4 text-destructive" />}
+                      <span className={`text-sm ${stats[2].isPositive ? 'text-success' : 'text-destructive'}`}>
+                        {stats[2].change}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{stats[2].description}</p>
+                  </div>
+                  <div className="bg-primary-muted p-3 rounded-lg">
+                    <AlertTriangle className="w-6 h-6 text-primary" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card
+              className="hover:shadow-md transition-all duration-300 cursor-pointer"
+              onClick={() => window.location.href = '/inventory'}
+            >
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-muted-foreground">{stats[3].title}</p>
+                    <p className="text-2xl font-bold">{stats[3].value}</p>
+                    <div className="flex items-center gap-1">
+                      {stats[3].isPositive ? <TrendingUp className="w-4 h-4 text-success" /> : <TrendingDown className="w-4 h-4 text-destructive" />}
+                      <span className={`text-sm ${stats[3].isPositive ? 'text-success' : 'text-destructive'}`}>
+                        {stats[3].change}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{stats[3].description}</p>
+                  </div>
+                  <div className="bg-primary-muted p-3 rounded-lg">
+                    <Package className="w-6 h-6 text-primary" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           {/* Voice Recognition Card */}
@@ -253,19 +370,65 @@ const Dashboard = () => {
                 <CardDescription>Smart recommendations for your business</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="p-4 bg-white/50 rounded-lg">
-                  <h4 className="font-semibold text-success mb-2">📈 Sales Peak Detected</h4>
-                  <p className="text-sm text-muted-foreground">Your Maggi noodles sales increase by 40% on weekends. Consider stocking up!</p>
-                </div>
-                <div className="p-4 bg-white/50 rounded-lg">
-                  <h4 className="font-semibold text-primary mb-2">💡 Payment Reminder</h4>
-                  <p className="text-sm text-muted-foreground">5 customers have pending payments. Send WhatsApp reminders to improve cash flow.</p>
-                </div>
-                <div className="p-4 bg-white/50 rounded-lg">
-                  <h4 className="font-semibold text-warning mb-2">⚠️ Stock Alert</h4>
-                  <p className="text-sm text-muted-foreground">Tea packets are running low. Based on sales pattern, restock before Friday.</p>
-                </div>
-                <Button variant="gradient" size="sm" className="w-full">
+                {(() => {
+                  const insights = [];
+                  const lowStockProducts = (inventoryData || []).filter((p: any) => p.quantity <= (p.threshold || 10));
+                  const pendingPayments = (paymentsData || []).filter((p: any) => p.status === 'pending' || p.status === 'overdue');
+
+                  // Low Stock Insight
+                  if (lowStockProducts.length > 0) {
+                    const productNames = lowStockProducts.slice(0, 2).map((p: any) => p.name).join(', ');
+                    insights.push(
+                      <div key="stock" className="p-4 bg-white/50 rounded-lg">
+                        <h4 className="font-semibold text-warning mb-2">⚠️ Stock Alert</h4>
+                        <p className="text-sm text-muted-foreground">
+                          {lowStockProducts.length === 1
+                            ? `${productNames} is running low. Restock soon!`
+                            : `${productNames} ${lowStockProducts.length > 2 ? `and ${lowStockProducts.length - 2} more items` : ''} are running low. Restock before they run out!`}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  // Pending Payments Insight
+                  if (pendingPayments.length > 0) {
+                    insights.push(
+                      <div key="payments" className="p-4 bg-white/50 rounded-lg">
+                        <h4 className="font-semibold text-primary mb-2">💡 Payment Reminder</h4>
+                        <p className="text-sm text-muted-foreground">
+                          {pendingPayments.length} customer{pendingPayments.length > 1 ? 's have' : ' has'} pending payments. Send WhatsApp reminders to improve cash flow.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  // Sales Trend Insight
+                  if (dashboardData?.todaySales?.value > 0) {
+                    insights.push(
+                      <div key="sales" className="p-4 bg-white/50 rounded-lg">
+                        <h4 className="font-semibold text-success mb-2">📈 Today's Performance</h4>
+                        <p className="text-sm text-muted-foreground">
+                          You've made ₹{dashboardData.todaySales.value.toLocaleString()} in sales today. Keep up the great work!
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  // Default message if no insights
+                  if (insights.length === 0) {
+                    insights.push(
+                      <div key="default" className="p-4 bg-white/50 rounded-lg">
+                        <h4 className="font-semibold text-primary mb-2">✨ All Good!</h4>
+                        <p className="text-sm text-muted-foreground">
+                          Your business is running smoothly. Keep recording sales and managing inventory!
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return insights;
+                })()}
+                <Button variant="gradient" size="sm" className="w-full" onClick={() => window.location.href = '/reports'}>
                   View Detailed Analytics
                 </Button>
               </CardContent>
